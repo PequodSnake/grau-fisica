@@ -2,90 +2,94 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from scipy.stats import linregress
 import os
 
-FITXER_DADES = 'dadesestacionari_1a.csv'
-DIR_SORTIDA = 'fit_results'
+FITXER = 'dadesestacionari_1a.csv'
+OUT_DIR = 'fit_results'
+os.makedirs(OUT_DIR, exist_ok=True)
 
-# funcio exponencial per ajustar les dades
-def exponencial(x, a, b):
-    return a * np.exp(b * x)
+# funcio model exponencial
+def T_model(x, T0, a, b):
+    return T0 + a * np.exp(b * x)
 
-# llegim el csv amb separador ';' i coma decimal
-df = pd.read_csv(FITXER_DADES, sep=';', decimal=',', header=0)
-
-# extraccio de dades
-x_ferro, T_ferro = df['x_fe'].to_numpy(float), df['T_fe'].to_numpy(float)
-x_llauto, T_llauto = df['x_ll'].to_numpy(float), df['T_ll'].to_numpy(float)
-x_alumini, T_alumini = df['x_al'].to_numpy(float), df['T_al'].to_numpy(float)
-
-# dades de cada metall
+# llegim dades
+df = pd.read_csv(FITXER, sep=';', decimal=',', header=0)
 metalls = {
-    'Ferro': (x_ferro, T_ferro),
-    'Llauto': (x_llauto, T_llauto),
-    'Alumini': (x_alumini, T_alumini)
+    'Ferro': (df['x_fe'], df['T_fe']),
+    'Llauto': (df['x_ll'], df['T_ll']),
+    'Alumini': (df['x_al'], df['T_al'])
 }
 
-resultats_exp = []
-plt.figure(figsize=(8, 6))
+resultats = []
+plt.figure(figsize=(8,6))
 
-# ajust exponencial
 for nom, (x, T) in metalls.items():
-    par_opt, par_cov = curve_fit(exponencial, x, T, p0=[T[0], -0.01])
-    a, b = par_opt
-    a_err, b_err = np.sqrt(np.diag(par_cov))
+    x, T = np.array(x), np.array(T)
+    T0_ini, a_ini, b_ini = T[-1], T[0]-T[-1], -0.03  # valors inicials per al fit
 
-    T_ajust = exponencial(x, a, b)
-    residus = T - T_ajust
-    ss_res = np.sum(residus**2)
-    ss_tot = np.sum((T - np.mean(T))**2)
-    r2_exp = 1 - (ss_res / ss_tot)
+    # ajust exponencial
+    popt, pcov = curve_fit(T_model, x, T, p0=[T0_ini, a_ini, b_ini],
+                           bounds=([0,0,-1],[300,300,0]), maxfev=20000)
+    T0, a, b = popt
+    T0_err, a_err, b_err = np.sqrt(np.diag(pcov))  # incerteses del fit
 
-    resultats_exp.append((nom, a, a_err, b, b_err, r2_exp))
+    # regressio lineal sobre ln(T-T0)
+    mask = (T - T0) > 0  # només valors positius per log
+    m, n = np.polyfit(x[mask], np.log(T[mask]-T0), 1)
+    # error de m
+    residus = np.log(T[mask]-T0) - (m*x[mask] + n)
+    sigma_m = np.sqrt(np.sum(residus**2)/(len(residus)-2) / np.sum((x[mask]-np.mean(x[mask]))**2))
+    R2_lin = np.corrcoef(np.log(T[mask]-T0), m*x[mask]+n)[0,1]**2
 
-    plt.scatter(x, T, label=f'{nom} dades')
-    plt.plot(x, T_ajust, label=f'{nom} ajust exp')
+    # R^2 del fit
+    T_fit = T_model(x, T0, a, b)
+    R2 = 1 - np.sum((T-T_fit)**2)/np.sum((T-np.mean(T))**2)
 
-plt.xlabel('Distancia (cm)')
+    # p i error de p a partir de m
+    p, p_err = -m*100, sigma_m*100
+
+    resultats.append((nom, T0, T0_err, a, a_err, b, b_err, R2, p, p_err, n, m, R2_lin))
+
+    # grafic dades i fit
+    x_fit = np.linspace(min(x), max(x), 400)
+    plt.scatter(x, T, label=f'dades experimentals ({nom})')
+    plt.plot(x_fit, T_model(x_fit, T0, a, b), label=f'regressió exp ({nom})')
+
+plt.xlabel('Distància (cm)')
 plt.ylabel('Temperatura (°C)')
-plt.title('Ajust exponencial de la temperatura')
+plt.title('Ajust exponencial: T(x)=T0+a exp(bx)')
 plt.legend()
-os.makedirs(DIR_SORTIDA, exist_ok=True)
-plt.savefig(os.path.join(DIR_SORTIDA, 'ajust_exponencial.png'), dpi=300)
+plt.grid(True)
+plt.tight_layout()
+plt.savefig(os.path.join(OUT_DIR, 'ajust_exponencial.png'), dpi=300)
 plt.close()
 
-plt.figure(figsize=(8, 6))
-
-# regressio lineal del ln(T)
-resultats_lin = []
-for nom, (x, T) in metalls.items():
-    lnT = np.log(T)
-    pendent, interseccio, r_valor, p_valor, err_std = linregress(x, lnT)
-    r2_lin = r_valor**2
-
-    lnT_ajust = interseccio + pendent * x
-
-    plt.scatter(x, lnT, label=f'{nom} dades')
-    plt.plot(x, lnT_ajust, label=f'{nom} ajust lin.')
-
-    resultats_lin.append((nom, interseccio, pendent, err_std, r2_lin))
-
-plt.xlabel('Distancia (cm)')
-plt.ylabel('ln(T)')
-plt.title('Regressio lineal de ln(T) per a totes les barres')
-plt.legend()
-plt.savefig(os.path.join(DIR_SORTIDA, 'regressio_lnT.png'), dpi=300)
+# grafic ln(T-T0)
+plt.figure(figsize=(8,6))
+for nom, T0, *_ , n, m, _ in resultats:
+    x, T = metalls[nom]
+    mask = (T - T0) > 0
+    plt.scatter(x[mask], np.log(T[mask]-T0), label=f'dades experimentals ({nom})')
+    x_fit = np.linspace(min(x), max(x), 400)
+    plt.plot(x_fit, n + m*x_fit, label=f'regressió lin ({nom})')
+plt.xlabel('Distància (cm)')
+plt.ylabel('ln(T-T0)')
+plt.legend(); plt.grid(True)
+plt.title('Regressió lineal de ln(T-T0)')
+plt.tight_layout()
+plt.savefig(os.path.join(OUT_DIR, 'regressio_lnT.png'), dpi=300)
 plt.close()
 
-# escrivim els resultats a un fitxer txt
-with open(os.path.join(DIR_SORTIDA, 'resultats.txt'), 'w', encoding='utf-8') as f:
-    f.write('Ajust exponencial T = a·exp(bx)\n')
-    for nom, a, a_err, b, b_err, r2 in resultats_exp:
-        f.write(f'{nom}: a = {a:.3f} ± {a_err:.3f}, b = {b:.5f} ± {b_err:.5f}, R² = {r2:.5f}\n')
+# escrivim resultats a TXT
+with open(os.path.join(OUT_DIR, 'resultats.txt'), 'w', encoding='utf-8') as f:
+    for nom, T0, T0_err, a, a_err, b, b_err, R2, p, p_err, n, m, R2_lin in resultats:
+        f.write(f'{nom}:\n')
+        f.write(f'  T0 = {T0:.2f} ± {T0_err:.2f} °C\n')
+        f.write(f'  a  = {a:.2f} ± {a_err:.2f}\n')
+        f.write(f'  b  = {b:.5f} ± {b_err:.5f} cm^-1\n')
+        f.write(f'  R^2_exp = {R2:.5f}\n')
+        f.write(f'  p  = {p:.5f} ± {p_err:.5f} m^-1\n')
+        f.write(f'  n  = {n:.3f},  m = {m:.5f} cm^-1,  R^2_lin = {R2_lin:.5f}\n\n')
 
-    f.write('\nRegressio lineal de ln(T) = m·x + n\n')
-    for nom, n, m, err, r2 in resultats_lin:
-        f.write(f'{nom}: n = {n:.3f}, m = {m:.5f} ± {err:.5f}, R² = {r2:.5f}\n')
+print("resultats guardats a fit_results")
 
-print('Resultats i grafiques guardats a la carpeta fit_results')
