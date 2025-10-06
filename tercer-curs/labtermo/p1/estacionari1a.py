@@ -39,6 +39,7 @@ for nom, (x, T) in metalls.items():
     # error de m
     residus = np.log(T[mask]-T0) - (m*x[mask] + n)
     sigma_m = np.sqrt(np.sum(residus**2)/(len(residus)-2) / np.sum((x[mask]-np.mean(x[mask]))**2))
+    sigma_n = sigma_m * np.sqrt(np.sum(x[mask]**2)/len(x[mask]))
     R2_lin = np.corrcoef(np.log(T[mask]-T0), m*x[mask]+n)[0,1]**2
 
     # R^2 del fit
@@ -48,7 +49,7 @@ for nom, (x, T) in metalls.items():
     # p i error de p a partir de m
     p, p_err = -m*100, sigma_m*100
 
-    resultats.append((nom, T0, T0_err, a, a_err, b, b_err, R2, p, p_err, n, m, R2_lin))
+    resultats.append((nom, T0, T0_err, a, a_err, b, b_err, R2, p, p_err, n, sigma_n, m, sigma_m, R2_lin))
 
     # grafic dades i fit
     x_fit = np.linspace(min(x), max(x), 400)
@@ -82,14 +83,13 @@ plt.close()
 
 # escrivim resultats a TXT
 with open(os.path.join(OUT_DIR, 'resultats.txt'), 'w', encoding='utf-8') as f:
-    for nom, T0, T0_err, a, a_err, b, b_err, R2, p, p_err, n, m, R2_lin in resultats:
+    for nom, T0, T0_err, a, a_err, b, b_err, R2, p, p_err, n, n_err, m, m_err, R2_lin in resultats:
         f.write(f'{nom}:\n')
         f.write(f'  T0 = {T0:.2f} ± {T0_err:.2f} °C\n')
         f.write(f'  a  = {a:.2f} ± {a_err:.2f}\n')
         f.write(f'  b  = {b:.5f} ± {b_err:.5f} cm^-1\n')
         f.write(f'  R^2_exp = {R2:.5f}\n')
         f.write(f'  p  = {p:.5f} ± {p_err:.5f} m^-1\n')
-        f.write(f'  n  = {n:.3f},  m = {m:.5f} cm^-1,  R^2_lin = {R2_lin:.5f}\n\n')
+        f.write(f'  n  = {n:.3f} ± {n_err:.3f},  m = {m:.5f} ± {m_err:.5f} cm^-1,  R^2_lin = {R2_lin:.5f}\n\n')
 
 print("resultats guardats a fit_results")
-
