@@ -27,21 +27,40 @@ sigma_x = 0.1
 
 resultats = {}
 
+# funcio per calcular periode via FFT
+# fem servir la FFT per obtenir la frequencia dominant de la senyal
+# el metode de find_peaks podia donar periodes erronis si hi havia soroll o pics irregulars
+def calcular_periode_fft(y, dt):
+    y = y - np.mean(y)  # treure mitjana per eliminar component DC
+    N = len(y)
+    fft_y = np.fft.fft(y)  # calcul FFT de la senyal
+    freqs = np.fft.fftfreq(N, dt)  # corresponent vector de frequencies
+    amplitud = np.abs(fft_y[:N//2])  # magnitud positiva
+    freqs_pos = freqs[:N//2]
+
+    # ignorem freq = 0
+    amplitud[0] = 0
+
+    # trobem frequencia dominant
+    idx_max = np.argmax(amplitud)
+    freq_dom = freqs_pos[idx_max]
+
+    if freq_dom == 0:
+        return np.nan
+    else:
+        periode = 1 / freq_dom # com que la senyal es sinusoidal, podem assumir que T=1/f_dom
+        return periode
+
 # calculs principals per cada columna
 for i in range(1, 7):
     y = df[i].values
     temp_mitjana = np.mean(y)
-    amplitud = (np.max(y) - np.min(y)) / 2
+    amplitud = (np.max(y) - np.min(y)) / 2 # encara que no es la amplitud exacta es acceptable
+    # com hem dit abans findpeaks no era fiable
 
-    pics, _ = find_peaks(y)  # trobem els pics per calcular periode
-
-    if len(pics) > 1:
-        periodes = np.diff(temps[pics])  # diferencies entre pics consecutius
-        periode_mitja = np.mean(periodes)
-        sigma_periode = np.std(periodes, ddof=1) / np.sqrt(len(periodes))  # incertesa periode
-    else:
-        periode_mitja = np.nan
-        sigma_periode = np.nan
+    # calcul periode via FFT
+    periode_mitja = calcular_periode_fft(y, dt)
+    sigma_periode = dt  # aproximem incertesa del periode a dt
 
     resultats[noms_columnes[i-1]] = {
         "Temperatura mitjana (C)": temp_mitjana,
@@ -73,12 +92,10 @@ plt.grid(True)
 plt.savefig("graf_totes_posicions.png")
 plt.show()
 
-# desfasament
+# desfasament respecte a posicio inicial de cada barra
 parells_desfasament = [
-    # barres grans respecte 0 cm
     (1, "Barra gran (0 cm)", 2, "Barra gran (10 cm)"),
     (1, "Barra gran (0 cm)", 3, "Barra gran (15 cm)"),
-    # barres petites respecte 0 cm
     (4, "Barra petita (0 cm)", 5, "Barra petita (10 cm)"),
     (4, "Barra petita (0 cm)", 6, "Barra petita (20 cm)")
 ]
@@ -91,8 +108,7 @@ for ref_idx, ref_nom, col_idx, col_nom in parells_desfasament:
     periode = resultats[col_nom]["Periode (s)"]
     sigma_periode = resultats[col_nom]["sigma_P (s)"]
     desfasament_phi = 2 * np.pi * desfasament_s / periode  # desfasament en radians
-    sigma_desfasament = dt  # incertesa desfasament
-    # incertesa del desfasament en radians combinant errors
+    sigma_desfasament = dt  # incertesa del desfasament
     sigma_phi = desfasament_phi * np.sqrt((sigma_desfasament/desfasament_s)**2 + (sigma_periode/periode)**2)
 
     # guardem els resultats del desfasament
