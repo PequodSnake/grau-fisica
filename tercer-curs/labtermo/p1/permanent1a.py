@@ -28,8 +28,6 @@ sigma_x = 0.1
 resultats = {}
 
 # funcio per calcular periode via FFT
-# fem servir la FFT per obtenir la frequencia dominant de la senyal
-# el metode de find_peaks podia donar periodes erronis si hi havia soroll o pics irregulars
 def calcular_periode_fft(y, dt):
     y = y - np.mean(y)  # treure mitjana per eliminar component DC
     N = len(y)
@@ -48,19 +46,18 @@ def calcular_periode_fft(y, dt):
     if freq_dom == 0:
         return np.nan
     else:
-        periode = 1 / freq_dom # com que la senyal es sinusoidal, podem assumir que T=1/f_dom
+        periode = 1 / freq_dom
         return periode
 
 # calculs principals per cada columna
 for i in range(1, 7):
     y = df[i].values
     temp_mitjana = np.mean(y)
-    amplitud = (np.max(y) - np.min(y)) / 2 # encara que no es la amplitud exacta es acceptable
-    # com hem dit abans findpeaks no era fiable
+    amplitud = (np.max(y) - np.min(y)) / 2
 
     # calcul periode via FFT
     periode_mitja = calcular_periode_fft(y, dt)
-    sigma_periode = dt  # aproximem incertesa del periode a dt
+    sigma_periode = dt
 
     resultats[noms_columnes[i-1]] = {
         "Temperatura mitjana (C)": temp_mitjana,
@@ -101,17 +98,40 @@ parells_desfasament = [
 ]
 
 for ref_idx, ref_nom, col_idx, col_nom in parells_desfasament:
-    pics_ref, _ = find_peaks(df[ref_idx].values)  # pics de la columna referencia
-    pics_col, _ = find_peaks(df[col_idx].values)  # pics de la columna a comparar
+    # trobar pics de referencia i columna
+    pics_ref, _ = find_peaks(df[ref_idx].values)
+    pics_col, _ = find_peaks(df[col_idx].values)
 
-    desfasament_s = temps[pics_col[0]] - temps[pics_ref[0]]  # desfasament en segons
+    # temps dels pics
+    t_pics_ref = temps[pics_ref]
+    t_pics_col = temps[pics_col]
+
+    # triem el primer pic de la referencia
+    t_ref = t_pics_ref[0]
+
+    # busquem el primer pic de la columna que vingui despres
+    t_col_candidates = t_pics_col[t_pics_col > t_ref]
+    if len(t_col_candidates) == 0:
+        # si no n'hi ha cap posterior, agafem el primer
+        t_col = t_pics_col[0]
+    else:
+        t_col = t_col_candidates[0]
+
+    # desfasament temporal
+    desfasament_s = t_col - t_ref
+
+    # si el desfasament supera mig periode, ajustem
     periode = resultats[col_nom]["Periode (s)"]
+    if desfasament_s > periode / 2:
+        desfasament_s -= periode
+
+    # desfasament angular
+    desfasament_phi = 2 * np.pi * desfasament_s / periode
     sigma_periode = resultats[col_nom]["sigma_P (s)"]
-    desfasament_phi = 2 * np.pi * desfasament_s / periode  # desfasament en radians
-    sigma_desfasament = dt  # incertesa del desfasament
+    sigma_desfasament = dt
     sigma_phi = desfasament_phi * np.sqrt((sigma_desfasament/desfasament_s)**2 + (sigma_periode/periode)**2)
 
-    # guardem els resultats del desfasament
+    # guardem resultats
     resultats[col_nom][f"Desfasament respecte {ref_nom} (s)"] = desfasament_s
     resultats[col_nom]["sigma_desfasament (s)"] = sigma_desfasament
     resultats[col_nom][f"Desfasament respecte {ref_nom} (phi rad)"] = desfasament_phi
