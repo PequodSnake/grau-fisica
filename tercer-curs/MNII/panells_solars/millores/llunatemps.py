@@ -1,0 +1,357 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+
+# parametres
+G = 6.67430e-11
+Msol = 1.98847e30
+Mterra = 5.972e24
+Mlluna = 7.348e22
+mu_sb = G * (Msol + Mterra + Mlluna) # mu sistema solar
+mu_tl = G * (Mterra + Mlluna) # mu sistema terra-lluna
+
+AU = 1.496e11
+e_sb = 0.0167 # excentricitat terra-sol
+a_sb = AU
+
+a_tl = 384400e3 # semieix major terra-lluna
+e_tl = 0.0549 # excentricitat lluna
+
+# factors de normalitzacio sistema sol-bariocentre
+r0_sb = a_sb
+t0_sb = np.sqrt(r0_sb**3 / mu_sb)
+
+# factors de normalitzacio sistema terra-lluna
+r0_tl = a_tl
+t0_tl = np.sqrt(r0_tl**3 / mu_tl)
+
+# condicions inicials bariocentre (1 gener)
+theta_phys_sb = -0.0344
+h_phys_sb = np.sqrt(mu_sb * a_sb * (1 - e_sb**2))
+r_phys_sb = a_sb * (1 - e_sb**2) / (1 + e_sb * np.cos(theta_phys_sb))
+vr_phys_sb = (mu_sb / h_phys_sb) * e_sb * np.sin(theta_phys_sb)
+omega_phys_sb = h_phys_sb / r_phys_sb**2
+
+# condicions inicials lluna (relatiu a terra)
+# suposem que comenca al perigeu
+theta_phys_tl = 0.0
+h_phys_tl = np.sqrt(mu_tl * a_tl * (1 - e_tl**2))
+r_phys_tl = a_tl * (1 - e_tl**2) / (1 + e_tl * np.cos(theta_phys_tl))
+vr_phys_tl = (mu_tl / h_phys_tl) * e_tl * np.sin(theta_phys_tl)
+omega_phys_tl = h_phys_tl / r_phys_tl**2
+
+# normalitzacio [r, vr, omega, theta]
+# sistema sol-bariocentre
+y_sb = np.array([
+    r_phys_sb / r0_sb, 
+    vr_phys_sb * t0_sb / r0_sb, 
+    omega_phys_sb * t0_sb, 
+    theta_phys_sb
+])
+
+# sistema terra-lluna
+y_tl = np.array([
+    r_phys_tl / r0_tl, 
+    vr_phys_tl * t0_tl / r0_tl, 
+    omega_phys_tl * t0_tl, 
+    theta_phys_tl
+])
+
+# ubicacio i panells
+lat = 41.5020697248622
+lon = 2.1039072409727404
+lat_rad = np.radians(lat)
+lon_rad = np.radians(lon)
+inc = np.radians(23.44)
+omega_terra = 2 * np.pi / (24 * 3600)
+solar_constant = 1361.0
+area_panell = 2.0
+potencia_max = 400.0
+num_panells = 1
+
+# dades climatiques (valles occidental)
+# probabilitat de dia clar (0-1) per mes (gen-des)
+probs_sol_mes = [0.55, 0.60, 0.65, 0.60, 0.65, 0.75, 0.85, 0.80, 0.70, 0.60, 0.55, 0.50]
+# temperatura maxima mitjana per mes
+temps_max_mes = [13, 14, 16, 18, 22, 26, 29, 29, 25, 21, 16, 13]
+# temperatura minima mitjana per mes
+temps_min_mes = [4, 5, 7, 9, 13, 17, 20, 20, 17, 13, 8, 5]
+# coeficient de perdua per temperatura (0.4% per grau)
+coef_temp = 0.004 
+
+# vector normal
+normal = np.array([
+    np.cos(lat_rad) * np.cos(lon_rad),
+    np.cos(lat_rad) * np.sin(lon_rad),
+    np.sin(lat_rad)
+])
+
+# RK4
+def derivades(y):
+    r, vr, omega, _ = y
+    return np.array([
+        vr, 
+        r * omega**2 - 1.0 / r**2, 
+        -2.0 * vr * omega / r, 
+        omega
+    ])
+
+dt = 1e-3
+nsteps_dia = int(2 * np.pi / (dt * 365.25))
+nsteps_total = nsteps_dia * 730
+
+orbita_theta_terra = [] # theta real de la terra
+
+# ratio de masses pel bariocentre
+mass_ratio = Mlluna / (Mterra + Mlluna)
+
+for step in range(nsteps_total):
+    # integrem sistema sol-bariocentre
+    k1 = derivades(y_sb)
+    k2 = derivades(y_sb + 0.5 * dt * k1)
+    k3 = derivades(y_sb + 0.5 * dt * k2)
+    k4 = derivades(y_sb + dt * k3)
+    y_sb += dt * (k1 + 2*k2 + 2*k3 + k4) / 6
+    
+    # integrem sistema terra-lluna
+    # hem de cambiar el dt perque els temps caracteristics son diferents
+    dt_tl = dt * (t0_sb / t0_tl)
+    
+    k1_m = derivades(y_tl)
+    k2_m = derivades(y_tl + 0.5 * dt_tl * k1_m)
+    k3_m = derivades(y_tl + 0.5 * dt_tl * k2_m)
+    k4_m = derivades(y_tl + dt_tl * k3_m)
+    y_tl += dt_tl * (k1_m + 2*k2_m + 2*k3_m + k4_m) / 6
+    
+    # cada vegada que hem completat un dia sencer
+    if (step + 1) % nsteps_dia == 0:
+        
+        # coordenades polars a cartesianes bariocentre
+        r_b = y_sb[0] * r0_sb
+        th_b = y_sb[3]
+        x_b = r_b * np.cos(th_b)
+        y_b = r_b * np.sin(th_b)
+        
+        # coordenades polars a cartesianes lluna relativa terra
+        r_m = y_tl[0] * r0_tl
+        th_m = y_tl[3]
+        x_rel = r_m * np.cos(th_m)
+        y_rel = r_m * np.sin(th_m)
+        
+        # posicio absoluta terra
+        # terra esta a -mass_ratio * r_rel del bariocentre
+        x_t = x_b - mass_ratio * x_rel
+        y_t = y_b - mass_ratio * y_rel
+        
+        # calculem theta real de la terra respecte al sol
+        theta_real = np.arctan2(y_t, x_t)
+        orbita_theta_terra.append(theta_real)
+
+orbita_theta_terra = np.array(orbita_theta_terra)
+
+def calcular_produccio_horaria(theta_sol, dia_simulacio):
+    # determinar mes (0-11)
+    dia_any = dia_simulacio % 365
+    mes = int(dia_any / 30.44) % 12
+    
+    # simulacio de nuvols
+    rand_val = random.random()
+    prob_sol = probs_sol_mes[mes]
+    
+    factor_nuvol = 1.0
+    tipus_dia = "assolellat"
+    
+    if rand_val > prob_sol:
+        # dia no assolellat
+        if rand_val > prob_sol + (1 - prob_sol) * 0.7:
+            # molt ennuvolat
+            factor_nuvol = random.uniform(0.1, 0.3)
+            tipus_dia = "ennuvolat"
+        else:
+            # variable
+            factor_nuvol = random.uniform(0.4, 0.8)
+            tipus_dia = "variable"
+            
+    # temperatures del dia (amb un petit soroll aleatori)
+    t_max = temps_max_mes[mes] + random.uniform(-2, 2)
+    t_min = temps_min_mes[mes] + random.uniform(-2, 2)
+
+    # declinacio solar
+    declinacio = inc * np.sin(theta_sol - theta_phys_sb - np.pi/2)
+
+    # altitud maxima
+    sin_alt_max = np.sin(lat_rad) * np.sin(declinacio) + np.cos(lat_rad) * np.cos(declinacio)
+    alt_max = np.arcsin(sin_alt_max)
+    
+    dt_h = 1.0 / 6.0
+    hores = np.arange(0, 24, dt_h)
+    
+    # calcular angle horari i rotacio terrestre
+    angles_horaris = (hores - 12) * omega_terra * 3600
+    angles_rotacio = angles_horaris + lon_rad
+    
+    # calcular vector direccio al sol
+    sol_dir_x = np.cos(declinacio) * np.cos(angles_rotacio)
+    sol_dir_y = np.cos(declinacio) * np.sin(angles_rotacio)
+    sol_dir_z = np.full_like(angles_rotacio, np.sin(declinacio))
+    
+    # calcular angle entre panell i sol
+    cos_angle = sol_dir_x * normal[0] + sol_dir_y * normal[1] + sol_dir_z * normal[2]
+    
+    cond = cos_angle > 0
+    irradiacions = np.zeros_like(cos_angle)
+    potencies = np.zeros_like(cos_angle)
+    temperatures_panel = np.zeros_like(cos_angle)
+    
+    if np.any(cond):
+        # irradiacio base
+        irradiacio_geo = solar_constant * cos_angle[cond]
+        
+        # aplicar factor nuvols
+        irradiacio_real = irradiacio_geo * factor_nuvol
+        irradiacions[cond] = irradiacio_real
+        
+        # model de temperatura horaria (aproximacio sinusoidal)
+        # suposem pic de calor a les 14h
+        hora_pic = 14.0
+        t_ambient = t_min + (t_max - t_min) * 0.5 * (1 + np.cos((hores[cond] - hora_pic) * 2 * np.pi / 24))
+        
+        # temperatura del panell (puja amb la irradiacio)
+        t_panel = t_ambient + 0.025 * irradiacio_real
+        temperatures_panel[cond] = t_panel
+        
+        # calcular eficiencia termica
+        # per cada grau sobre 25, perdem eficiencia
+        perdua_temp = np.maximum(0, t_panel - 25.0) * coef_temp
+        factor_termic = 1.0 - perdua_temp
+        factor_termic = np.maximum(0, factor_termic) # no pot ser negatiu
+        
+        # potencia final
+        ratio_irradiacio = np.minimum(irradiacio_real / 1000.0, 1.0)
+        potencies[cond] = ratio_irradiacio * potencia_max * num_panells * factor_termic
+    
+    # calcular energia total del dia en kwh
+    energia_dia = np.sum(potencies) * dt_h / 1000
+    
+    idxs = potencies > 0
+    return hores[idxs], potencies[idxs], irradiacions[idxs], energia_dia, np.degrees(alt_max)
+
+# analisi dies
+n_dies = 730
+
+produccio_diaria = np.zeros(n_dies)
+altitud_maxima_diaria = np.zeros(n_dies)
+
+# bucle per calcular produccio i altitud per cada dia
+for i in range(n_dies):
+    # passem 'i' per determinar el clima del dia
+    _, _, _, energia, altitud = calcular_produccio_horaria(orbita_theta_terra[i], i)
+    produccio_diaria[i] = energia
+    altitud_maxima_diaria[i] = altitud
+
+produccio_any1 = produccio_diaria[:365]
+produccio_any2 = produccio_diaria[365:730]
+
+# calcular el dia amb maxima i minima produccio
+dia_max = np.argmax(produccio_diaria)
+energia_max = produccio_diaria[dia_max]
+
+dia_min = np.argmin(produccio_diaria)
+energia_min = produccio_diaria[dia_min]
+
+# dades dies extrems
+hores_dia_max, pot_dia_max, irr_dia_max, _, _ = calcular_produccio_horaria(orbita_theta_terra[dia_max], dia_max)
+hores_dia_min, pot_dia_min, irr_dia_min, _, _ = calcular_produccio_horaria(orbita_theta_terra[dia_min], dia_min)
+
+# imprimir per terminal
+print(f"Ubicacio: {lat:.4f}°N, {lon:.4f}°E")
+print(f"Installacio: {num_panells} panells de {area_panell}m² ({num_panells * potencia_max / 1000:.1f} kW total)")
+print(f"  Dia amb mes produccio: Dia {dia_max + 1} ({energia_max:.2f} kWh)")
+print(f"  Dia amb menys produccio: Dia {dia_min + 1} ({energia_min:.2f} kWh)")
+print(f"ANY 1:")
+print(f"  Produccio anual: {np.sum(produccio_any1):.2f} kWh")
+print(f"  Produccio mitjana diaria: {np.mean(produccio_any1):.2f} kWh/dia")
+print(f"ANY 2:")
+print(f"  Produccio anual: {np.sum(produccio_any2):.2f} kWh")
+print(f"  Produccio mitjana diaria: {np.mean(produccio_any2):.2f} kWh/dia")
+
+# grafics
+# altura sol
+plt.figure(figsize=(12, 5))
+dies_plot = np.arange(1, n_dies + 1)
+plt.plot(dies_plot, altitud_maxima_diaria, 'r-', linewidth=2)
+plt.fill_between(dies_plot, altitud_maxima_diaria, alpha=0.2, color='red')
+
+events = [
+    (80, 'Equinocci març', 'green'), (172, 'Solstici estiu', 'orange'),
+    (266, 'Equinocci setembre', 'green'), (355, 'Solstici hivern', 'blue'),
+    (445, 'Equinocci març', 'green'), (537, 'Solstici estiu', 'orange'),
+    (631, 'Equinocci setembre', 'green'), (720, 'Solstici hivern', 'blue')
+]
+for dia, nom, color in events:
+    label = nom if dia < 366 else None 
+    plt.axvline(dia, color=color, linestyle='--', alpha=0.5, linewidth=1, label=label)
+
+plt.ylabel("Altitud solar màxima (graus)")
+plt.title("Altitud màxima del Sol")
+plt.axvline(365.5, color='black', linestyle='--', linewidth=2, alpha=0.5)
+plt.grid(True, alpha=0.3)
+plt.xlim(1, n_dies)
+plt.legend(loc='upper right')
+plt.tight_layout()
+plt.savefig('altitud_solar_clima.png', dpi=300)
+plt.show()
+
+# produccio diaria
+plt.figure(figsize=(12, 5))
+plt.plot(dies_plot, produccio_diaria, 'g-', linewidth=1)
+plt.fill_between(dies_plot, produccio_diaria, alpha=0.2, color='green')
+plt.scatter([dia_max+1], [energia_max], c='red', s=100, zorder=5, label=f'Max: dia {dia_max+1}')
+plt.scatter([dia_min+1], [energia_min], c='blue', s=100, zorder=5, label=f'Min: dia {dia_min+1}')
+plt.axvline(365.5, color='black', linestyle='--', linewidth=2, alpha=0.5)
+plt.ylabel("Energia produida (kWh)")
+plt.title("Producció diaria d'energia solar")
+plt.grid(True, alpha=0.3)
+plt.legend()
+plt.xlim(1, n_dies)
+plt.ylim(bottom=0)
+plt.tight_layout()
+plt.savefig('produccio_diaria_clima.png', dpi=300)
+plt.show()
+
+# produccio en un dia
+def plot_dia_detall(dia, energia, hores, pot, irr, color_pot, color_irr, tipus):
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+    
+    limit_y_pot = (num_panells * potencia_max / 1000) * 1.1
+    
+    ax1.set_xlabel("Hora del dia")
+    ax1.set_ylabel("Potència generada (kW)", color=color_pot)
+    if len(hores) > 0:
+        ax1.plot(hores, pot/1000, color=color_pot, linewidth=2.5, label='Potència')
+        ax1.fill_between(hores, pot/1000, alpha=0.3, color=color_pot)
+    ax1.tick_params(axis='y', labelcolor=color_pot)
+    
+    ax1.set_ylim(0, limit_y_pot) 
+    ax1.grid(True, alpha=0.3)
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel("Irradiació solar (W/m²)", color=color_irr)
+    if len(hores) > 0:
+        ax2.plot(hores, irr, color=color_irr, linewidth=2, linestyle='--', label='Irradiació')
+    ax2.tick_params(axis='y', labelcolor=color_irr)
+    
+    ax2.set_ylim(0, 1400)
+
+    plt.title(f"Dia {dia + 1} - {tipus} producció ({energia:.2f} kWh)")
+    
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+    
+    plt.tight_layout()
+    plt.savefig(f'potencia_dia_{tipus.lower()}_clima.png', dpi=300)
+    plt.show()
+
+plot_dia_detall(dia_max, energia_max, hores_dia_max, pot_dia_max, irr_dia_max, 'red', 'orange', 'Maxima')
+plot_dia_detall(dia_min, energia_min, hores_dia_min, pot_dia_min, irr_dia_min, 'blue', 'cyan', 'Minima')
